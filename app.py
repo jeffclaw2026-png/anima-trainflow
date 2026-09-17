@@ -97,6 +97,9 @@ LOG_BLACKLIST = [
 ]
 
 
+from browse_feature import (browse_dir, browse_pick, open_picked_dataset,
+                            list_lora_review_datasets, import_lora_review_dataset)
+
 LOG_BOX__MAX_LINES = 16
 GALLERY_HEIGHT = 440
 MAX_LOG_LINES = 500
@@ -930,6 +933,20 @@ with gr.Blocks(title="Anima TrainFlow: Easy LoRA Trainer for Anima 2B") as ui:
                 with gr.Row():
                     trigger_word = gr.Textbox(label="Trigger Word / Project Name", value=cs.get("trigger_word", ""), placeholder="e.g., unique_style")
                     dataset_path = gr.Textbox(label="Dataset Path (Images + .txt)", value=cs.get("dataset_path", ""), placeholder="C:/Images/MyDataset")
+                with gr.Accordion("🗂️ Browse folders / Import from LoRA Review", open=False):
+                    with gr.Tab("📂 Browse GX10 folders"):
+                        browse_start = gr.Textbox(label="Start at", value="/home/jeffrey", scale=3)
+                        browse_btn = gr.Button("List", size="sm", scale=1)
+                        browse_list = gr.Radio(label="Subfolders", choices=[], interactive=True)
+                        with gr.Row():
+                            browse_into_btn = gr.Button("➡️ Enter selected", size="sm")
+                            browse_use_btn = gr.Button("✅ Use this folder as dataset", size="sm")
+                        browse_base = gr.State(value="")
+                    with gr.Tab("⬇️ Import from LoRA Review"):
+                        lr_refresh_btn = gr.Button("🔄 List datasets", size="sm")
+                        lr_list = gr.Radio(label="Datasets (keep-only export + captions)", choices=[], interactive=True)
+                        lr_import_btn = gr.Button("⬇️ Import selected to GX10 & fill path", variant="primary")
+                        lr_info = gr.Markdown("")
                 with gr.Accordion("🔧 Paths to Models <- Set Once", open=False):
                     dit_input = gr.Textbox(label="DiT", value=cs.get("dit_path", ""))
                     qwen_input = gr.Textbox(label="Qwen3", value=cs.get("qwen_path", ""))
@@ -1022,6 +1039,12 @@ with gr.Blocks(title="Anima TrainFlow: Easy LoRA Trainer for Anima 2B") as ui:
         inputs=[dataset_path, output_log],
         outputs=[output_log]
     )
+    browse_btn.click(fn=browse_dir, inputs=[browse_start], outputs=[output_log, browse_base, browse_list])
+    browse_pick_evt = browse_list.select(fn=browse_pick, inputs=[output_log, browse_base, browse_list], outputs=[output_log, browse_base])
+    browse_into_btn.click(fn=browse_dir, inputs=[browse_base], outputs=[output_log, browse_base, browse_list])
+    browse_use_btn.click(fn=open_picked_dataset, inputs=[browse_base, output_log], outputs=[output_log, dataset_path])
+    lr_refresh_btn.click(fn=list_lora_review_datasets, inputs=None, outputs=[lr_list, lr_info])
+    lr_import_btn.click(fn=import_lora_review_dataset, inputs=[lr_list, output_log], outputs=[output_log, dataset_path])
     
     tagger_btn.click(
         fn=run_auto_tagging,
