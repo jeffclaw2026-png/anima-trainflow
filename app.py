@@ -116,6 +116,7 @@ TRAIN_DIR = TRAIN_BASE / "sd-scripts"
 TRAIN_SCRIPT = TRAIN_DIR / "anima_train_network.py"
 
 training_process = None
+ACTIVE_RUN = {"log": None, "project": None, "sample_dir": None}
 
 for d in [TRAIN_BASE, OUTPUT_BASE]:
     d.mkdir(parents=True, exist_ok=True)
@@ -834,7 +835,10 @@ def start_training(trigger_word, dataset_path, dit_p, qwen_p, vae_p, rank, lr, o
         training_process = subprocess.Popen(cmd, stdout=run_log_handle, stderr=subprocess.STDOUT,
                                             start_new_session=True,
                                             cwd=str(TRAIN_DIR.resolve()), env=env)
-        run_log_handle.close()  # child keeps its own fd; parent needn't hold it
+        run_log_handle.close()  # child keeps its own fd
+        ACTIVE_RUN["log"] = run_log_path
+        ACTIVE_RUN["project"] = project_name
+        ACTIVE_RUN["sample_dir"] = project_out_dir / "sample"
         import time as _time
         _pos = 0
         _stop_requested = False
@@ -881,6 +885,7 @@ def start_training(trigger_word, dataset_path, dit_p, qwen_p, vae_p, rank, lr, o
         yield "\n".join(log_lines), get_latest_images(sample_dir)
     finally:
         training_process = None
+        ACTIVE_RUN["log"] = None
 
 def stop_training():
     global training_process
@@ -917,6 +922,57 @@ def handle_optimizer_change(opt, current_lr, saved_adam_lr):
 
 
 # ==========================================
+def attach_running_training():
+    """Re-attach to a running training: tail its log until it finishes."""
+    global training_process
+    log_path = ACTIVE_RUN.get("log")
+    if not log_path or not Path(log_path).exists():
+        yield "No training is currently running.", gr.update()
+        return
+    sample_dir = ACTIVE_RUN.get("sample_dir") or (OUTPUT_BASE / (ACTIVE_RUN.get("project") or "") / "sample")
+    log_lines = [f"\U0001F517 Re-attached to running training: {ACTIVE_RUN.get('project')}"]
+    import time as _time
+    _pos = 0
+    while True:
+        proc = training_process
+        _alive = proc is not None and proc.poll() is None
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="ignore") as _rlf:
+                _rlf.seek(_pos)
+                _new = _rlf.read()
+                _pos = _rlf.tell()
+        except OSError:
+            _new = ""
+        for line in _new.splitlines():
+            line_str = line.replace('\r', '').strip()
+            if not line_str: continue
+            if any(skip_word in line_str for skip_word in LOG_BLACKLIST): continue
+            if "steps:" in line_str and "/" in line_str:
+                match = step_pattern.search(line_str)
+                if match:
+                    current_step_info = match.group(0)
+                    if log_lines and "steps:" in log_lines[-1] and current_step_info in log_lines[-1]:
+                        log_lines[-1] = line_str
+                    else:
+                        log_lines.append(line_str)
+                else:
+                    log_lines.append(line_str)
+            else:
+                log_lines.append(line_str)
+            if len(log_lines) > MAX_LOG_LINES: del log_lines[:-MAX_LOG_LINES]
+            check_image = any(x in line_str.lower() for x in ["saved", "sample", "%|", "it/s", "s/it"])
+            if check_image:
+                current_images = get_latest_images(sample_dir)
+                if current_images:
+                    yield "\n".join(log_lines), current_images
+                    continue
+            yield "\n".join(log_lines), gr.update()
+        _time.sleep(1.0)
+        if not _alive:
+            break
+    log_lines.append("\u2705 Process finished.")
+    yield "\n".join(log_lines), get_latest_images(sample_dir)
+
 # UI BUILDER
 # ==========================================
 cs = load_settings()
@@ -957,6 +1013,7 @@ with gr.Blocks(title="Anima TrainFlow: Easy LoRA Trainer for Anima 2B") as ui:
                 with gr.Row():
                     start_btn = gr.Button("🚀 Start Training", variant="primary")
                     stop_btn = gr.Button("🛑 Stop", variant="stop")
+                    attach_btn = gr.Button("🔗 Re-attach", variant="secondary")
                     folder_btn = gr.Button("📁 Checkpoint Folder", variant="secondary")
             with gr.Column(scale=1):
                 with gr.Row():
@@ -1057,6 +1114,7 @@ with gr.Blocks(title="Anima TrainFlow: Easy LoRA Trainer for Anima 2B") as ui:
     
     start_btn.click(fn=start_training, inputs=training_inputs, outputs=[output_log, preview_gallery])
     stop_btn.click(fn=stop_training, outputs=output_log)
+    attach_btn.click(fn=attach_running_training, inputs=None, outputs=[output_log, preview_gallery])
     folder_btn.click(fn=open_output_folder, inputs=[trigger_word], outputs=output_log)
 
 if __name__ == "__main__":
