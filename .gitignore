@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.log
+*.7z
+settings.json
+training/settings.json
+training/output/
+training/sd-scripts/output/
+training/sd-scripts/logs/
+.DS_Store
+models/u2net/u2net.onnx
+models/wd-eva02-large-tagger-v3/model.onnx
