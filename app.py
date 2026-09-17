@@ -924,7 +924,7 @@ cs = load_settings()
 with gr.Blocks(title="Anima TrainFlow: Easy LoRA Trainer for Anima 2B") as ui:
     gr.Markdown(
         "# Anima TrainFlow\n"
-        '<div class="attribution"><span class="author-text">Created by ThetaCursed</span></div>',
+        '<div class="attribution"><span class="author-text">Created by ThetaCursed · Inspired by Anima · Updated by Sophia (Qwen3.8)</span></div>',
         elem_id="main-header"
     )
     
