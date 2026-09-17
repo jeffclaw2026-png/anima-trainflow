@@ -829,53 +829,56 @@ def start_training(trigger_word, dataset_path, dit_p, qwen_p, vae_p, rank, lr, o
     env["ACCELERATE_USE_CPU"] = "False"
 
     try:
-        training_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, bufsize=1, cwd=str(TRAIN_DIR.resolve()), env=env, encoding="utf-8", errors="ignore")
-        
-        for line in iter(training_process.stdout.readline, ""):
-            line_str = line.replace('\r', '').strip()
-            if not line_str: continue
-
-            if any(skip_word in line_str for skip_word in LOG_BLACKLIST): continue 
-
-            if "subprocess.CalledProcessError" in line_str and "returned non-zero exit status 15" in line_str:
-                log_lines.append("🛑 Interrupted by user.")
-                yield "\n".join(log_lines), gr.update()
-                break 
-
-            if "steps:" in line_str and "/" in line_str:
-                match = step_pattern.search(line_str)
-                if match:
-                    current_step_info = match.group(0)
-                    if log_lines and "steps:" in log_lines[-1] and current_step_info in log_lines[-1]:
-                        log_lines[-1] = line_str
+        run_log_path = Path(project_out_dir) / "run_log.txt"
+        run_log_handle = open(run_log_path, "w", encoding="utf-8")
+        training_process = subprocess.Popen(cmd, stdout=run_log_handle, stderr=subprocess.STDOUT,
+                                            start_new_session=True,
+                                            cwd=str(TRAIN_DIR.resolve()), env=env)
+        run_log_handle.close()  # child keeps its own fd; parent needn't hold it
+        import time as _time
+        _pos = 0
+        _stop_requested = False
+        while True:
+            _alive = training_process.poll() is None
+            with open(run_log_path, "r", encoding="utf-8", errors="ignore") as _rlf:
+                _rlf.seek(_pos)
+                _new = _rlf.read()
+                _pos = _rlf.tell()
+            for line in _new.splitlines():
+                line_str = line.replace('\r', '').strip()
+                if not line_str: continue
+                if any(skip_word in line_str for skip_word in LOG_BLACKLIST): continue
+                if "subprocess.CalledProcessError" in line_str and "returned non-zero exit status 15" in line_str:
+                    log_lines.append("\U0001F6D9 Interrupted by user.")
+                    _stop_requested = True
+                if "steps:" in line_str and "/" in line_str:
+                    match = step_pattern.search(line_str)
+                    if match:
+                        current_step_info = match.group(0)
+                        if log_lines and "steps:" in log_lines[-1] and current_step_info in log_lines[-1]:
+                            log_lines[-1] = line_str
+                        else:
+                            log_lines.append(line_str)
                     else:
                         log_lines.append(line_str)
                 else:
                     log_lines.append(line_str)
-            else:
-                log_lines.append(line_str)
-            
-            if len(log_lines) > MAX_LOG_LINES: del log_lines[:-MAX_LOG_LINES]
-
-            check_image = any(x in line_str.lower() for x in ["saved", "sample", "%|", "it/s", "s/it"])
-            if check_image:
-                current_images = get_latest_images(sample_dir)
-                if len(current_images) != last_image_count:
-                    last_image_count = len(current_images)
-                    yield "\n".join(log_lines), current_images
-                    continue
-
-            yield "\n".join(log_lines), gr.update()
-            
+                if len(log_lines) > MAX_LOG_LINES: del log_lines[:-MAX_LOG_LINES]
+                check_image = any(x in line_str.lower() for x in ["saved", "sample", "%|", "it/s", "s/it"])
+                if check_image:
+                    current_images = get_latest_images(sample_dir)
+                    if len(current_images) != last_image_count:
+                        last_image_count = len(current_images)
+                        yield "\n".join(log_lines), current_images
+                        continue
+                yield "\n".join(log_lines), gr.update()
+            _time.sleep(1.0)
+            if not _alive or _stop_requested:
+                break
         if training_process is not None:
             training_process.wait()
-            
-        log_lines.append("✅ Process finished or stopped.")
+        log_lines.append("\u2705 Process finished or stopped.")
         yield "\n".join(log_lines), get_latest_images(sample_dir)
-        
-    except Exception as e:
-        log_lines.append(f"❌ Error: {str(e)}")
-        yield "\n".join(log_lines), gr.update()
     finally:
         training_process = None
 
